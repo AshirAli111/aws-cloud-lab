@@ -1,0 +1,234 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Student Course Management System
+
+Parameters:
+  UseCloudFront:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: false = host from S3 website (HTTP, no CloudFront). true = CloudFront (HTTPS, needs a verified account)
+  DomainName:
+    Type: String
+    Default: ''
+    Description: Optional custom domain (leave empty to use the free cloudfront.net address)
+  CertificateArn:
+    Type: String
+    Default: ''
+    Description: Optional ACM certificate ARN from us-east-1
+
+Conditions:
+  UseCF: !Equals [!Ref UseCloudFront, 'true']
+  NoCF: !Equals [!Ref UseCloudFront, 'false']
+  UseDomain: !Not [!Equals [!Ref DomainName, '']]
+
+Globals:
+  Function:
+    Runtime: java17
+    Architectures: [x86_64]
+    MemorySize: 512
+    Timeout: 15
+
+Resources:
+  # ---------- Cognito ----------
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: scms-users
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireUppercase: false
+          RequireSymbols: false
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+
+  AdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: admins
+      UserPoolId: !Ref UserPool
+
+  # ---------- DynamoDB ----------
+  CoursesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+      AttributeDefinitions:
+        - {AttributeName: courseId, AttributeType: S}
+      KeySchema:
+        - {AttributeName: courseId, KeyType: HASH}
+
+  EnrollmentsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+      AttributeDefinitions:
+        - {AttributeName: studentId, AttributeType: S}
+        - {AttributeName: courseId, AttributeType: S}
+      KeySchema:
+        - {AttributeName: studentId, KeyType: HASH}
+        - {AttributeName: courseId, KeyType: RANGE}
+
+  # ---------- API Gateway (HTTP API + Cognito JWT authorizer) ----------
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: ['*']
+        AllowHeaders: [Authorization, Content-Type]
+        AllowMethods: [GET, POST, DELETE, OPTIONS]
+      Auth:
+        DefaultAuthorizer: CognitoAuth
+        Authorizers:
+          CognitoAuth:
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+              audience: [!Ref UserPoolClient]
+
+  # ---------- Lambda ----------
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/
+      Handler: com.example.scms.Handler::handleRequest
+      Environment:
+        Variables:
+          COURSES_TABLE: !Ref CoursesTable
+          ENROLLMENTS_TABLE: !Ref EnrollmentsTable
+      Policies:
+        - DynamoDBCrudPolicy: {TableName: !Ref CoursesTable}
+        - DynamoDBCrudPolicy: {TableName: !Ref EnrollmentsTable}
+      Events:
+        GetRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: GET
+        PostRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: POST
+        DeleteRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: DELETE
+
+  # ---------- S3 + CloudFront (frontend) ----------
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub student-course-portal-${AWS::AccountId}
+      WebsiteConfiguration: !If
+        - NoCF
+        - IndexDocument: index.html
+          ErrorDocument: index.html
+        - !Ref AWS::NoValue
+      PublicAccessBlockConfiguration: !If
+        - NoCF
+        - BlockPublicAcls: false
+          BlockPublicPolicy: false
+          IgnorePublicAcls: false
+          RestrictPublicBuckets: false
+        - !Ref AWS::NoValue
+
+  OAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Condition: UseCF
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Condition: UseCF
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Aliases: !If [UseDomain, [!Ref DomainName], !Ref AWS::NoValue]
+        ViewerCertificate: !If
+          - UseDomain
+          - AcmCertificateArn: !Ref CertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - !Ref AWS::NoValue
+        Origins:
+          - Id: s3origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt OAC.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: s3origin
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: UseCF
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: {Service: cloudfront.amazonaws.com}
+            Action: s3:GetObject
+            Resource: !Sub ${FrontendBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+
+  PublicBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: NoCF
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub ${FrontendBucket.Arn}/*
+
+Outputs:
+  ApiUrl:
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+  BucketName:
+    Value: !Ref FrontendBucket
+  DistributionId:
+    Condition: UseCF
+    Value: !Ref Distribution
+  SiteUrl:
+    Value: !If
+      - UseCF
+      - !Sub https://${Distribution.DomainName}
+      - !GetAtt FrontendBucket.WebsiteURL

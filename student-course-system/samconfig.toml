@@ -1,0 +1,13 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "scms"
+resolve_s3 = true
+s3_prefix = "scms"
+region = "ap-south-1"
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "DomainName=\"\" CertificateArn=\"\""
+image_repositories = []
+
+[default.global.parameters]
+region = "ap-south-1"

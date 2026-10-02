@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Course Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Course Portal</h1>
+    <div id="userbar" hidden>
+      <span id="who"></span>
+      <button id="logout" class="ghost">Log out</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Signed-out view -->
+    <section id="auth" class="panel narrow">
+      <div class="tabs">
+        <button id="tab-login" class="tab active">Log in</button>
+        <button id="tab-signup" class="tab">Create account</button>
+      </div>
+
+      <form id="login-form" onsubmit="return false">
+        <label>Email <input id="l-email" type="email" autocomplete="username"></label>
+        <label>Password <input id="l-pass" type="password" autocomplete="current-password"></label>
+        <button id="btn-login">Log in</button>
+      </form>
+
+      <form id="signup-form" onsubmit="return false" hidden>
+        <label>Full name <input id="s-name" autocomplete="name"></label>
+        <label>Email <input id="s-email" type="email" autocomplete="email"></label>
+        <label>Password <input id="s-pass" type="password" autocomplete="new-password" placeholder="8+ characters, include a number"></label>
+        <button id="btn-signup">Create account</button>
+      </form>
+
+      <form id="confirm-form" onsubmit="return false" hidden>
+        <p>We emailed you a 6-digit code. Enter it to activate your account.</p>
+        <label>Verification code <input id="c-code" inputmode="numeric"></label>
+        <button id="btn-confirm">Verify account</button>
+      </form>
+      <p id="msg" role="status"></p>
+    </section>
+
+    <!-- Signed-in view -->
+    <section id="app" hidden>
+      <div id="admin-panel" class="panel" hidden>
+        <h2>Add a course</h2>
+        <div class="row">
+          <input id="a-title" placeholder="Course title">
+          <input id="a-instructor" placeholder="Instructor">
+        </div>
+        <input id="a-desc" placeholder="Short description">
+        <button id="btn-add">Add course</button>
+      </div>
+
+      <div class="grid">
+        <div class="panel">
+          <h2>Available courses</h2>
+          <ul id="courses" class="list"></ul>
+        </div>
+        <div class="panel">
+          <h2>My courses</h2>
+          <ul id="mine" class="list"></ul>
+        </div>
+      </div>
+      <p id="app-msg" role="status"></p>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
